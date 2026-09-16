@@ -58,6 +58,9 @@
   .section{background:var(--card);border-radius:12px;padding:18px 20px;margin-top:18px;box-shadow:var(--shadow);}
   .section h2{margin:0 0 4px;font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px;}
   .section h2 .tag{font-size:11px;font-weight:600;color:#fff;background:var(--accent);padding:2px 8px;border-radius:20px;}
+  h2 .mSel{margin-left:auto;font-size:13px;font-weight:500;padding:4px 9px;
+    border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);cursor:pointer;}
+  h2 .mSel:focus{outline:none;border-color:var(--accent);}
   .section .desc{font-size:12px;color:var(--muted);margin-bottom:12px;}
   .chart-box{position:relative;height:320px;}
   .chart-box.tall{height:380px;}
@@ -98,7 +101,7 @@
   <div class="controls">
     <label for="monthSel">分析月份</label>
     <select id="monthSel"></select>
-    <span class="hint">说明：下方「集团 / 车系 / 车型 / 门店」各板块按所选月份展示；「月度走势」展示 2026 年 1–9 月全周期。所有「加权优惠」均按开票量加权。</span>
+    <span class="hint">说明：下方各板块按所选月份展示，<b>每个分板块标题右侧也有月份下拉，可就地切换且全局同步</b>；「月度走势」展示 2026 年 1–9 月全周期。所有「加权优惠」均按开票量加权。</span>
   </div>
 
   <div class="kpis" id="kpis"></div>
@@ -111,12 +114,12 @@
 
   <div class="grid2">
     <div class="section">
-      <h2><span class="tag">集团</span>集团加权优惠与开票量</h2>
+      <h2><span class="tag">集团</span>集团加权优惠与开票量<select class="mSel"></select></h2>
       <div class="desc">所选月份各集团加权平均优惠（元/台）与开票量（台）。</div>
       <div class="chart-box"><canvas id="groupBar"></canvas></div>
     </div>
     <div class="section">
-      <h2><span class="tag">集团</span>集团明细</h2>
+      <h2><span class="tag">集团</span>集团明细<select class="mSel"></select></h2>
       <div class="desc">所选月份各集团加权优惠、开票量与环比。</div>
       <div class="scrollx"><table id="groupTable"></table></div>
     </div>
@@ -124,37 +127,37 @@
 
   <div class="grid2">
     <div class="section">
-      <h2><span class="tag">车型</span>车型概览（折让分档）</h2>
+      <h2><span class="tag">车型</span>车型概览（折让分档）<select class="mSel"></select></h2>
       <div class="desc">所选月份各车型按加权优惠降序；分档以全域加权均值为基准（高折让=红 / 低折让=绿）。</div>
       <div class="scrollx"><table id="modelTable"></table></div>
     </div>
     <div class="section">
-      <h2><span class="tag">车系</span>车系结构</h2>
+      <h2><span class="tag">车系</span>车系结构<select class="mSel"></select></h2>
       <div class="desc">所选月份各大车系加权平均优惠（虚线为全域加权均值）。</div>
       <div class="chart-box"><canvas id="seriesBar"></canvas></div>
     </div>
   </div>
 
   <div class="section">
-    <h2><span class="tag">交叉</span>车型 × 集团 对照表</h2>
+    <h2><span class="tag">交叉</span>车型 × 集团 对照表<select class="mSel"></select></h2>
     <div class="desc">单元格 = 该集团该车型在所选月份的加权平均优惠（元/台）；底色按当月全表区间做红→绿折让热力映射（红=高折让）。空白=无门店明细数据（增程 / Ultra / T03 仅有车系汇总）。</div>
     <div class="scrollx"><table id="crossTable"></table></div>
   </div>
 
   <div class="section">
-    <h2><span class="tag">明细</span>集团车型明细</h2>
+    <h2><span class="tag">明细</span>集团车型明细<select class="mSel"></select></h2>
     <div class="desc">所选月份各集团下属车型的加权优惠与开票量（仅列有门店明细数据的车型）。</div>
     <div class="scrollx"><table id="detailTable"></table></div>
   </div>
 
   <div class="section">
-    <h2><span class="tag">门店</span>门店明细</h2>
+    <h2><span class="tag">门店</span>门店明细<select class="mSel"></select></h2>
     <div class="desc">所选月份各门店加权优惠（元/台）与开票量（台），点击表头可排序。</div>
     <div class="scrollx"><table id="storeTable"></table></div>
   </div>
 
   <div class="section">
-    <h2><span class="tag">榜单</span>车型优惠榜 · 各车型让利 TOP3 门店</h2>
+    <h2><span class="tag">榜单</span>车型优惠榜 · 各车型让利 TOP3 门店<select class="mSel"></select></h2>
     <div class="desc">按所选月份，车系按 A→D 顺序排列。第 1–3 名为该车型在所有门店中折让优惠最高的门店及折让金额（含开票量）；「东莞平均优惠」为该车型当月全域加权平均（按开票量加权）；「头部/东莞」= 第 1 名折让 ÷ 东莞平均，倍数越大表示头部门店让利越激进。</div>
     <div class="scrollx"><table id="topStoreTable"></table></div>
   </div>
@@ -4767,11 +4770,20 @@ function renderAll(m){
   renderDetailTable(m); renderStoreTable(m); renderTopStoreTable(m);
 }
 
+// 月份下拉：顶部 + 各分板块标题处，全部双向联动
+function syncMonthSelects(){
+  document.querySelectorAll('.mSel').forEach(s=>{ s.value=curMonth; });
+  const g=document.getElementById('monthSel'); if(g) g.value=curMonth;
+}
 function init(){
-  const sel=document.getElementById('monthSel');
-  sel.innerHTML=MONTHS.map(m=>`<option value="${m}">${m}</option>`).join('');
-  sel.value=curMonth;
-  sel.onchange=()=>{curMonth=sel.value; renderAll(curMonth);};
+  const opts=MONTHS.map(m=>`<option value="${m}">${m}</option>`).join('');
+  document.querySelectorAll('.mSel').forEach(s=>{
+    s.innerHTML=opts; s.value=curMonth;
+    s.onchange=()=>{ curMonth=s.value; syncMonthSelects(); renderAll(curMonth); };
+  });
+  const g=document.getElementById('monthSel');
+  g.innerHTML=opts; g.value=curMonth;
+  g.onchange=()=>{ curMonth=g.value; syncMonthSelects(); renderAll(curMonth); };
   renderTrend(); renderCaliber(); renderAll(curMonth);
 }
 init();
