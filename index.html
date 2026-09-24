@@ -85,6 +85,20 @@
   .rk-cell{text-align:left !important;white-space:nowrap;}
   .avg-cell{font-weight:700;}
   .mult-pill{display:inline-block;padding:2px 10px;border-radius:20px;background:#fde2e1;color:#c0392b;font-weight:700;font-size:12px;}
+  .h2pad{flex:1;}
+  .fxlab{font-size:12px;font-weight:500;color:var(--muted);}
+  .fxSel{font-size:13px;font-weight:500;padding:4px 9px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--ink);cursor:pointer;}
+  .fxSel:focus{outline:none;border-color:var(--accent);}
+  .fstep{margin-top:14px;padding-left:12px;border-left:3px solid var(--line);}
+  .fstep .ft{font-weight:650;font-size:13px;margin-bottom:6px;}
+  .fstep .fval{font-size:12.5px;color:var(--muted);line-height:1.95;}
+  .num{font-variant-numeric:tabular-nums;}
+  .na{color:#9aa4b2;}
+  .pill{padding:3px 8px;border-radius:4px;font-weight:600;font-size:12px;}
+  .pill.lo{background:#e3f4ea;color:#1e7e4f;}
+  .pill.hi{background:#fde2e1;color:#c0392b;}
+  .posv{color:#c0392b;} .negv{color:#1e7e4f;}
   .footer{margin-top:24px;text-align:center;color:var(--muted);font-size:12px;}
   @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}}
   @media(max-width:600px){.kpis{grid-template-columns:repeat(2,1fr)}}
@@ -160,6 +174,15 @@
     <h2><span class="tag">榜单</span>车型优惠榜 · 各车型让利 TOP3 门店<select class="mSel"></select></h2>
     <div class="desc">按所选月份，车系按 A→D 顺序排列。第 1–3 名为该车型在所有门店中折让优惠最高的门店及折让金额（含开票量）；「东莞平均优惠」为该车型当月全域加权平均（按开票量加权）；「头部/东莞」= 第 1 名折让 ÷ 东莞平均，倍数越大表示头部门店让利越激进。</div>
     <div class="scrollx"><table id="topStoreTable"></table></div>
+  </div>
+
+  <div class="section">
+    <h2><span class="tag">计分</span>集团得分计算公式<span class="h2pad"></span>
+      <span class="fxlab">车系</span><select id="fxSeries" class="fxSel"></select>
+      <span class="fxlab">集团</span><select id="fxGroup" class="fxSel"></select>
+      <select class="mSel"></select></h2>
+    <div class="desc" id="fxDesc"></div>
+    <div id="formula"></div>
   </div>
 
   <div class="section">
@@ -4517,6 +4540,11 @@ function tierBadge(v,base){
 let curMonth = MONTHS[MONTHS.length-1];
 let trendChart, groupBarChart, seriesBarChart;
 
+// 集团得分：参与结算的四家集团与分摊权重（按用户口径）
+const SCORE_GROUPS = ['东唐','一维','东富','华跃'];
+const SCORE_W = {'东唐':4,'一维':3,'东富':2,'华跃':1};
+let fxState = {series:'all', group:'all'};
+
 function renderHeader(){
   document.getElementById('periodSub').textContent =
     `数据周期：2026 年 1 月 – 9 月 ｜ 范围：东莞区域门店 ｜ 核心指标：加权平均优惠（元/台，按开票量加权）`;
@@ -4753,6 +4781,97 @@ function renderStoreTable(m){
   });
 }
 
+/* ============ 集团得分计算公式 ============
+   ① 加分：每车型折让冠军门店所在集团 +5（D19/D99 +10）→ 原始
+   ② 还原：全体扣最小值，最低集团归 0
+   ③ 逐一清零：每个「正分」集团执行一轮 —— 该集团归 0，其分数按
+      东唐:一维:东富:华跃 = 4:3:2:1 在其余三家的权重间归一后分摊（被清零方本轮不再被扣分）
+   ④ 合计 = 还原 + 各轮，四家集团合计恒为 0
+   候选门店不含骏威门店（用户确认口径：冠军取四家内最高门店） */
+function scoreModels(){
+  return SERIES.filter(s => STORES.some(st => SSM[st] && SSM[st][s]));
+}
+function renderFormula(m){
+  const allModels = scoreModels().filter(s => fxState.series==='all' || SG[s]===fxState.series);
+  const cands = STORES.filter(st => SCORE_GROUPS.indexOf(SGROUP[st])>=0
+                                && (fxState.group==='all' || SGROUP[st]===fxState.group));
+
+  const raw={}; SCORE_GROUPS.forEach(g=>raw[g]=0);
+  const detail=[];
+  allModels.forEach(mdl=>{
+    const list=cands.map(st=>{const c=storeSeriesCell(st,mdl,m); return {st,g:SGROUP[st],d:c.d,q:c.q};})
+      .filter(x=>x.d!=null && x.q!=null && x.q>0)
+      .sort((a,b)=>b.d-a.d);
+    if(!list.length) return;
+    const top=list[0];
+    const pts=(mdl==='D19'||mdl==='D99')?10:5;
+    raw[top.g]+=pts;
+    detail.push({mdl,g:top.g,store:top.st,amt:top.d,q:top.q,pts});
+  });
+
+  const min1=Math.min.apply(null, SCORE_GROUPS.map(g=>raw[g]));
+  const restore={}; SCORE_GROUPS.forEach(g=>restore[g]=raw[g]-min1);
+
+  const rounds=[];
+  SCORE_GROUPS.forEach(g=>{
+    const s=restore[g];
+    if(s<=0) return;
+    const others=SCORE_GROUPS.filter(x=>x!==g);
+    const wsum=others.reduce((a,x)=>a+SCORE_W[x],0);
+    const row={}; SCORE_GROUPS.forEach(x=>row[x]=0);
+    others.forEach(x=>{ row[x] = -s*SCORE_W[x]/wsum; });
+    rounds.push({g,s,others,wsum,row});
+  });
+  rounds.forEach((r,i)=>r.no=i+1);
+
+  const total={}; SCORE_GROUPS.forEach(g=>total[g]=restore[g]+rounds.reduce((a,r)=>a+r.row[g],0));
+  const grand=SCORE_GROUPS.reduce((a,g)=>a+total[g],0);
+
+  const sv=x=>{const r=Math.round(x*100)/100; return r===0?'0':r.toLocaleString('en-US');};
+  const td=x=>`<td class="num ${x>0?'posv':(x<0?'negv':'')}">${x>0?'+':''}${sv(x)}</td>`;
+  const CN=['一','二','三','四'];
+
+  document.getElementById('fxDesc').innerHTML =
+    `按当前筛选（月份 / 车系 / 集团）实时计算 · ① 每车型折让冠军门店所在集团加分（D19/D99 +10，其余 +5）→ ② 还原：全体扣最小值，最低集团归 0 → ③ 正分集团逐一清零，其分数按 东唐:一维:东富:华跃 = 4:3:2:1 分摊给另外三家 → ④ 还原与各轮相加，四家集团合计恒为 0 ｜ 候选门店不含骏威门店，冠军取四家内最高门店 ｜ 车型范围：${detail.length} 个有门店明细的车系`;
+
+  let html='';
+  /* 第一步 · 加分明细 */
+  html+=`<div class="fstep"><div class="ft">第一步 · 加分（每车型折让冠军门店所在集团 +5，D19/D99 +10）</div>`;
+  if(detail.length){
+    html+=`<table><thead><tr><th>车型</th><th>车系</th><th>折让冠军门店（集团）</th><th>加权优惠</th><th>开票量</th><th>加分</th></tr></thead><tbody>`+
+      detail.map(d=>`<tr><td><b>${d.mdl}</b></td><td class="na">${SG[d.mdl]}</td>`+
+        `<td>${SSHORT[d.store]} <span class="na">(${d.g})</span></td>`+
+        `<td class="num">¥${fmt(d.amt)}</td><td class="num">${fmt(d.q)}</td>`+
+        `<td class="num posv">+${d.pts}</td></tr>`).join('')+
+      `</tbody><tfoot><tr><td>集团小计</td><td class="na">原始得分</td><td class="na">最低分 ${sv(min1)}</td>`+
+      `<td class="num" colspan="3">${SCORE_GROUPS.map(g=>`<span class="grp-dot" style="background:${GROUP_COLORS[g]}"></span>${g} ${sv(raw[g])}`).join(' ｜ ')}</td></tr></tfoot></table>`;
+  } else {
+    html+=`<p class="na">当前筛选下无车型数据</p>`;
+  }
+  html+=`</div>`;
+
+  /* 第二至四步 · 结算表 */
+  html+=`<div class="fstep"><div class="ft">第二至四步 · 得分结算表</div>`+
+    `<table style="max-width:620px"><thead><tr><th>步骤</th>${SCORE_GROUPS.map(g=>`<th>${g}</th>`).join('')}</tr></thead><tbody>`+
+    `<tr><td>原始</td>${SCORE_GROUPS.map(g=>td(raw[g])).join('')}</tr>`+
+    `<tr><td>还原</td>${SCORE_GROUPS.map(g=>td(restore[g])).join('')}</tr>`+
+    rounds.map(r=>`<tr><td>第${CN[r.no-1]}轮清零 ${r.g}</td>${SCORE_GROUPS.map(g=>td(r.row[g])).join('')}</tr>`).join('')+
+    `</tbody><tfoot><tr><td><b>合计</b></td>${SCORE_GROUPS.map(g=>`<td class="num"><b class="${total[g]>0?'posv':(total[g]<0?'negv':'')}">${total[g]>0?'+':''}${sv(total[g])}</b></td>`).join('')}</tr></tfoot></table>`+
+    `<div class="fval" style="margin-top:8px">`+
+    `② <b>还原</b>：全体扣最小值 ${sv(min1)}，最低集团归 0`+
+    (rounds.length
+      ? `<br>③ <b>逐一清零</b>（共 ${rounds.length} 轮，每个正分集团 1 轮）：`+
+        rounds.map(r=>`第${CN[r.no-1]}轮清零 <b>${r.g}</b>（${sv(r.s)} 分）→ ${r.g} 归 0，`+
+          `${sv(r.s)} 分按 ${r.others.join(':')} = ${r.others.map(x=>SCORE_W[x]).join(':')} 分摊给另外三家 → `+
+          r.others.map(x=>`${x} ${sv(r.row[x])}`).join('、')+`（${r.g} 本轮不再被扣分）`).join('<br>')
+      : `<br>③ 无正分集团，无需清零`)+
+    `<br>④ <b>合计</b> = 还原 + 各轮 ｜ 四家合计 = <b>${sv(grand)}</b> `+
+    (Math.abs(grand)<1e-9?'<span class="pill lo">= 0 ✓</span>':'<span class="pill hi">≠ 0</span>')+
+    `</div></div>`;
+
+  document.getElementById('formula').innerHTML=html;
+}
+
 function renderCaliber(){
   document.getElementById('caliber').innerHTML=`
     <b>1. 核心指标</b>：<b>加权平均优惠（元/台）</b> = Σ(单车优惠 × 开票量) / Σ开票量；<b>开票量（台）</b> = 订单数合计。所有集团 / 车系 / 车型 / 门店层面的「加权优惠」均严格按开票量加权，与深圳开票折让看板口径一致。<br>
@@ -4760,14 +4879,15 @@ function renderCaliber(){
     <b>3. 门店归属集团</b>：东唐（东城/松山湖/石排大道/常朗路/企石/高胜车城）、一维（厚街/大岭山/长安振安东路/莞太路）、华跃（虎门车城）、骏威（高埗/塘厦）、东富（寮步），口径参照东莞销量日报。<b>高胜车城店按日报口径并入东唐</b>。<br>
     <b>4. 月份覆盖差异</b>：A05（8 月起）、D19（4 月起）、D99（7 月起）、T03（7 月起）、各增程/Ultra（陆续起售）等起售较晚，早期月份无数据；月度走势中对应柱/折线中断属正常。<br>
     <b>5. 交叉表说明</b>：车型×集团对照表仅纳入有门店明细的 10 个主车系（A05/A10/B01/B10/C10/C11/C16/D19/D99/Lafa5）；C10增程、C11增程、C16增程、D19增程、D99增程、Lafa5 Ultra、T03 仅有车系级汇总、无门店拆分，故交叉表、集团明细与车型优惠榜中留空或不出现。<b>车型优惠榜</b>中「东莞平均优惠」取该车系当月全域加权值（含全部门店开票量），头部/东莞 = 第 1 名门店折让 ÷ 东莞平均。<br>
-    <b>6. 颜色映射</b>：对照表底色按当月全表区间做红→绿热力映射，<b>红色=高折让（让利多）</b>，绿色=低折让；车型概览分档以全域加权均值为基准（±10%）。`;
+    <b>6. 颜色映射</b>：对照表底色按当月全表区间做红→绿热力映射，<b>红色=高折让（让利多）</b>，绿色=低折让；车型概览分档以全域加权均值为基准（±10%）。<br>
+    <b>7. 集团得分计算公式</b>：① 每个有门店明细的车系，取其<b>折让冠军门店</b>（加权优惠最高且开票量 &gt; 0）所在集团加分，D19/D99 加 <b>10</b> 分、其余车型加 <b>5</b> 分，逐车型累加得「原始」分 → ② 「还原」= 全体原始分扣最小值，最低集团归 0 → ③ 对每个<b>正分</b>集团执行一轮清零：该集团归 0，其分数按 <b>东唐:一维:东富:华跃 = 4:3:2:1</b> 在其余三家权重间归一后分摊为正负相反数（被清零方本轮不再被扣分）→ ④ 「合计」= 还原 + 各轮，四家集团合计恒为 0。候选门店<b>不含骏威门店</b>（冠军取四家内最高门店），车型范围仅含 10 个有门店明细的主车系，增程 / Ultra / T03 不参与计分。`;
   document.getElementById('footer').textContent='东莞区域门店开票折让看板 · 数据源：门店平均优惠报表（含开票量，2026-01 ~ 2026-09）';
 }
 
 function renderAll(m){
   renderHeader(); renderKPI(m); renderGroupBar(m); renderGroupTable(m);
   renderModelOverview(m); renderSeriesBar(m); renderCrossTable(m);
-  renderDetailTable(m); renderStoreTable(m); renderTopStoreTable(m);
+  renderDetailTable(m); renderStoreTable(m); renderTopStoreTable(m); renderFormula(m);
 }
 
 // 月份下拉：顶部 + 各分板块标题处，全部双向联动
@@ -4781,6 +4901,18 @@ function init(){
     s.innerHTML=opts; s.value=curMonth;
     s.onchange=()=>{ curMonth=s.value; syncMonthSelects(); renderAll(curMonth); };
   });
+  const fxS=document.getElementById('fxSeries'), fxG=document.getElementById('fxGroup');
+  if(fxS){
+    const sl=[...new Set(scoreModels().map(s=>SG[s]))];
+    fxS.innerHTML=`<option value="all">全部车系</option>`+sl.map(s=>`<option value="${s}">${s}</option>`).join('');
+    fxS.value=fxState.series;
+    fxS.onchange=()=>{fxState.series=fxS.value; renderFormula(curMonth);};
+  }
+  if(fxG){
+    fxG.innerHTML=`<option value="all">全部集团</option>`+SCORE_GROUPS.map(g=>`<option value="${g}">${g}</option>`).join('');
+    fxG.value=fxState.group;
+    fxG.onchange=()=>{fxState.group=fxG.value; renderFormula(curMonth);};
+  }
   const g=document.getElementById('monthSel');
   g.innerHTML=opts; g.value=curMonth;
   g.onchange=()=>{ curMonth=g.value; syncMonthSelects(); renderAll(curMonth); };
